@@ -28,13 +28,30 @@ import { applyVisionInterceptor } from './vision.js';
  * 将工具定义构建为格式指令
  * 使用 Cursor IDE 原生场景融合：不覆盖模型身份，而是顺应它在 IDE 内的角色
  */
-function buildToolInstructions(tools: AnthropicTool[], hasCommunicationTool: boolean): string {
+function buildToolInstructions(
+    tools: AnthropicTool[],
+    hasCommunicationTool: boolean,
+    toolChoice?: AnthropicRequest['tool_choice'],
+): string {
     if (!tools || tools.length === 0) return '';
 
     const toolList = tools.map((tool) => {
         const schema = tool.input_schema ? JSON.stringify(tool.input_schema) : '{}';
         return `- **${tool.name}**: ${tool.description || 'No description'}\n  Schema: ${schema}`;
     }).join('\n');
+
+    // ★ tool_choice 强制约束
+    // 当 tool_choice = "any" 时：响应必须包含至少一个工具调用块，不允许纯文字回复。
+    // 当 tool_choice = "tool" 时：必须调用指定工具。
+    let forceConstraint = '';
+    if (toolChoice?.type === 'any') {
+        forceConstraint = `
+**MANDATORY**: Your response MUST include at least one \`\`\`json action block. Responding with plain text only is NOT acceptable when tool_choice is "any". If you are unsure what to do, use the most appropriate available action.`;
+    } else if (toolChoice?.type === 'tool') {
+        const requiredName = (toolChoice as { type: 'tool'; name: string }).name;
+        forceConstraint = `
+**MANDATORY**: Your response MUST call the "${requiredName}" action using a \`\`\`json action block. No other response format is acceptable.`;
+    }
 
     // 根据是否有交互工具，调整行为规则
     const behaviorRules = hasCommunicationTool
@@ -55,7 +72,7 @@ function buildToolInstructions(tools: AnthropicTool[], hasCommunicationTool: boo
 Available actions:
 ${toolList}
 
-${behaviorRules}`;
+${behaviorRules}${forceConstraint}`;
 }
 
 // ==================== 请求转换 ====================
@@ -86,10 +103,11 @@ export async function convertToCursorRequest(req: AnthropicRequest): Promise<Cur
 
     if (hasTools) {
         const tools = req.tools!;
-        console.log(`[Converter] 工具数量: ${tools.length}`);
+        const toolChoice = req.tool_choice;
+        console.log(`[Converter] 工具数量: ${tools.length}, tool_choice: ${toolChoice?.type ?? 'auto'}`);
 
         const hasCommunicationTool = tools.some(t => ['attempt_completion', 'ask_followup_question', 'AskFollowupQuestion'].includes(t.name));
-        let toolInstructions = buildToolInstructions(tools, hasCommunicationTool);
+        let toolInstructions = buildToolInstructions(tools, hasCommunicationTool, toolChoice);
 
         // 系统提示词与工具指令合并
         toolInstructions = combinedSystem + '\n\n---\n\n' + toolInstructions;
@@ -306,37 +324,79 @@ function extractToolResultText(block: AnthropicContentBlock): string {
 // ==================== 响应解析 ====================
 
 function tolerantParse(jsonStr: string): any {
+    // 第一次尝试：直接解析
     try {
         return JSON.parse(jsonStr);
-    } catch (e) {
-        let inString = false;
-        let escaped = false;
-        let fixed = '';
-        for (let i = 0; i < jsonStr.length; i++) {
-            const char = jsonStr[i];
-            if (char === '\\' && !escaped) {
-                escaped = true;
-                fixed += char;
-            } else if (char === '"' && !escaped) {
-                inString = !inString;
-                fixed += char;
-                escaped = false;
-            } else {
-                if (inString && (char === '\n' || char === '\r')) {
-                    fixed += char === '\n' ? '\\n' : '\\r';
-                } else if (inString && char === '\t') {
+    } catch (_e1) {
+        // pass — 继续尝试修复
+    }
+
+    // 第二次尝试：处理字符串内的裸换行符、制表符
+    let inString = false;
+    let escaped = false;
+    let fixed = '';
+    const bracketStack: string[] = []; // 跟踪 { 和 [ 的嵌套层级
+
+    for (let i = 0; i < jsonStr.length; i++) {
+        const char = jsonStr[i];
+
+        if (char === '\\' && !escaped) {
+            escaped = true;
+            fixed += char;
+        } else if (char === '"' && !escaped) {
+            inString = !inString;
+            fixed += char;
+            escaped = false;
+        } else {
+            if (inString) {
+                // 裸控制字符转义
+                if (char === '\n') {
+                    fixed += '\\n';
+                } else if (char === '\r') {
+                    fixed += '\\r';
+                } else if (char === '\t') {
                     fixed += '\\t';
                 } else {
                     fixed += char;
                 }
-                escaped = false;
+            } else {
+                // 在字符串外跟踪括号层级
+                if (char === '{' || char === '[') {
+                    bracketStack.push(char === '{' ? '}' : ']');
+                } else if (char === '}' || char === ']') {
+                    if (bracketStack.length > 0) bracketStack.pop();
+                }
+                fixed += char;
             }
+            escaped = false;
         }
+    }
 
-        // Remove trailing commas
-        fixed = fixed.replace(/,\s*([}\]])/g, '$1');
+    // 如果结束时仍在字符串内（JSON被截断），闭合字符串
+    if (inString) {
+        fixed += '"';
+    }
 
+    // 补全未闭合的括号（从内到外逐级关闭）
+    while (bracketStack.length > 0) {
+        fixed += bracketStack.pop();
+    }
+
+    // 移除尾部多余逗号
+    fixed = fixed.replace(/,\s*([}\]])/g, '$1');
+
+    try {
         return JSON.parse(fixed);
+    } catch (_e2) {
+        // 第三次尝试：截断到最后一个完整的顶级对象
+        const lastBrace = fixed.lastIndexOf('}');
+        if (lastBrace > 0) {
+            try {
+                return JSON.parse(fixed.substring(0, lastBrace + 1));
+            } catch { /* ignore */ }
+        }
+        // 全部修复手段失败，重新抛出原始错误
+        throw _e2;
     }
 }
 

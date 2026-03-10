@@ -12,6 +12,7 @@ import type {
     AnthropicResponse,
     AnthropicContentBlock,
     CursorChatRequest,
+    CursorMessage,
     CursorSSEEvent,
 } from './types.js';
 import { convertToCursorRequest, parseToolCalls, hasToolCalls } from './converter.js';
@@ -504,6 +505,43 @@ async function handleStream(res: Response, cursorReq: CursorChatRequest, body: A
 
         if (hasTools) {
             let { toolCalls, cleanText } = parseToolCalls(fullResponse);
+
+            // ★ tool_choice=any 强制重试：如果模型没有输出任何工具调用块，追加强制消息重试
+            const toolChoice = body.tool_choice;
+            const TOOL_CHOICE_MAX_RETRIES = 2;
+            let toolChoiceRetry = 0;
+            while (
+                toolChoice?.type === 'any' &&
+                toolCalls.length === 0 &&
+                toolChoiceRetry < TOOL_CHOICE_MAX_RETRIES
+            ) {
+                toolChoiceRetry++;
+                console.log(`[Handler] tool_choice=any 但模型未调用工具（第${toolChoiceRetry}次），强制重试...`);
+
+                // 在现有 Cursor 请求中追加强制 user 消息（不重新转换整个请求，代价最小）
+                const forceMsg: CursorMessage = {
+                    parts: [{
+                        type: 'text',
+                        text: `Your last response did not include any \`\`\`json action block. This is required because tool_choice is "any". You MUST respond using the json action format for at least one action. Do not explain yourself — just output the action block now.`,
+                    }],
+                    id: uuidv4(),
+                    role: 'user',
+                };
+                activeCursorReq = {
+                    ...activeCursorReq,
+                    messages: [...activeCursorReq.messages, {
+                        parts: [{ type: 'text', text: fullResponse || '(no response)' }],
+                        id: uuidv4(),
+                        role: 'assistant',
+                    }, forceMsg],
+                };
+                await executeStream();
+                ({ toolCalls, cleanText } = parseToolCalls(fullResponse));
+            }
+            if (toolChoice?.type === 'any' && toolCalls.length === 0) {
+                console.log(`[Handler] tool_choice=any 重试${TOOL_CHOICE_MAX_RETRIES}次后仍无工具调用`);
+            }
+
 
             if (toolCalls.length > 0) {
                 stopReason = 'tool_use';
