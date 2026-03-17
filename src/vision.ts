@@ -1,7 +1,6 @@
 import { getConfig } from './config.js';
 import type { AnthropicMessage, AnthropicContentBlock } from './types.js';
 import { getVisionProxyFetchOptions } from './proxy-agent.js';
-import { createWorker } from 'tesseract.js';
 
 export async function applyVisionInterceptor(messages: AnthropicMessage[]): Promise<void> {
     const config = getConfig();
@@ -53,6 +52,7 @@ export async function applyVisionInterceptor(messages: AnthropicMessage[]): Prom
 }
 
 async function processWithLocalOCR(imageBlocks: AnthropicContentBlock[]): Promise<string> {
+    const { createWorker } = await import('tesseract.js');
     const worker = await createWorker('eng+chi_sim');
     let combinedText = '';
 

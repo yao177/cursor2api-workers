@@ -1,0 +1,71 @@
+name: Deploy to Cloudflare Workers
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-workers-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Deploy Worker
+        env:
+          AUTH_TOKEN: ${{ vars.AUTH_TOKEN }}
+          PROXY: ${{ vars.PROXY }}
+          FP: ${{ vars.FP }}
+          PORT: ${{ vars.PORT }}
+          LOG_FILE_ENABLED: ${{ vars.LOG_FILE_ENABLED }}
+          CURSOR_MODEL: ${{ vars.CURSOR_MODEL }}
+          THINKING_ENABLED: ${{ vars.THINKING_ENABLED }}
+          COMPRESSION_ENABLED: ${{ vars.COMPRESSION_ENABLED }}
+          COMPRESSION_LEVEL: ${{ vars.COMPRESSION_LEVEL }}
+        run: |
+          args=()
+
+          add_var() {
+            local key="$1"
+            local value="$2"
+            if [ -n "$value" ]; then
+              args+=(--var "${key}:${value}")
+            fi
+          }
+
+          add_var AUTH_TOKEN "${AUTH_TOKEN}"
+          add_var PROXY "${PROXY}"
+          add_var FP "${FP}"
+          add_var PORT "${PORT:-3010}"
+          add_var LOG_FILE_ENABLED "${LOG_FILE_ENABLED:-false}"
+          add_var CURSOR_MODEL "${CURSOR_MODEL}"
+          add_var THINKING_ENABLED "${THINKING_ENABLED}"
+          add_var COMPRESSION_ENABLED "${COMPRESSION_ENABLED}"
+          add_var COMPRESSION_LEVEL "${COMPRESSION_LEVEL}"
+
+          npx wrangler deploy "${args[@]}"

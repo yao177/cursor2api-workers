@@ -1,8 +1,87 @@
-# Cursor2API v2.7.3
+# cursor2api-workers v2.7.3
 
 将 Cursor 文档页免费 AI 对话接口代理转换为 **Anthropic Messages API** 和 **OpenAI Chat Completions API**，支持 **Claude Code** 和 **Cursor IDE** 使用。
 
 > ⚠️ **版本说明**：当前 v2.7.3 统一 thinking 剥离逻辑、增强拒绝检测准确性、优化 Docker 部署配置。
+
+## Cloudflare Workers 部署
+
+项目现在提供了 Workers 入口 `src/worker.ts` 和 `wrangler.toml`，可以直接走 `wrangler` 部署。
+
+先安装新增依赖：
+
+```bash
+npm install
+```
+
+本地联调：
+
+```bash
+npm run cf:dev
+```
+
+构建检查：
+
+```bash
+npm run cf:check
+```
+
+正式部署：
+
+```bash
+npm run cf:deploy
+```
+
+如果你是手动部署，运行时配置可以直接写到 Cloudflare Worker 的 Secrets 和 Vars：
+
+```bash
+npx wrangler secret put AUTH_TOKEN
+npx wrangler secret put PROXY
+npx wrangler secret put FP
+```
+
+非敏感配置可以放进 `wrangler.toml` 的 `[vars]`，或在 Cloudflare Dashboard 里配置：
+
+```toml
+[vars]
+PORT = "3010"
+CURSOR_MODEL = "anthropic/claude-sonnet-4.6"
+THINKING_ENABLED = "true"
+COMPRESSION_LEVEL = "2"
+```
+
+当前 Workers 版本有两点取舍：
+
+- `logging.file_enabled` 不可用，Workers 没有可写本地磁盘
+- `/logs` 内置日志页面默认关闭
+- `vision.mode: ocr` 不适合 Workers，图片场景请改成 `vision.mode: api` 或直接关闭视觉拦截
+
+如果要接 GitHub Actions 自动部署，仓库里已经加了 `.github/workflows/deploy-workers.yml`。它会在推送到 `main` 时自动执行，也支持手动触发。
+
+GitHub 仓库里至少要配置两个 Actions Secret，专门给部署鉴权用：
+
+```text
+CLOUDFLARE_API_TOKEN
+CLOUDFLARE_ACCOUNT_ID
+```
+
+配置路径是 GitHub 仓库 `Settings -> Secrets and variables -> Actions`。
+
+如果你想把项目运行时配置也交给 GitHub Actions 统一管，当前工作流和手动部署不是同一套来源。现在这份 workflow 已经统一从 GitHub Actions Variables 读取运行时配置，再通过 `wrangler deploy --var` 注入到 Worker。目前内置了这几个名字：
+
+```text
+AUTH_TOKEN
+PROXY
+FP
+PORT
+LOG_FILE_ENABLED
+CURSOR_MODEL
+THINKING_ENABLED
+COMPRESSION_ENABLED
+COMPRESSION_LEVEL
+```
+
+所以现在的部署顺序是先 `npm ci`、再 `npm run build`、最后执行 `wrangler deploy`。如果某个 GitHub Variable 没配，就会自动跳过，继续使用 `wrangler.toml` 里的默认值。
 
 ## 原理
 

@@ -41,3 +41,5 @@ config.yaml
 
 # Screenshots (dev artifacts)
 *.png
+.ace-tool/
+.wrangler/

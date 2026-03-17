@@ -1,5 +1,5 @@
 {
-  "name": "cursor2api",
+  "name": "cursor2api-workers",
   "version": "2.7.3",
   "description": "Proxy Cursor docs AI to Anthropic Messages API for Claude Code",
   "type": "module",
@@ -7,6 +7,9 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
+    "cf:dev": "wrangler dev",
+    "cf:check": "wrangler deploy --dry-run",
+    "cf:deploy": "wrangler deploy",
     "test:handler-truncation": "node test/unit-handler-truncation.mjs",
     "test:openai-stream-truncation": "node test/unit-openai-stream-truncation.mjs",
     "test:image-paths": "node test/unit-image-paths.mjs",
@@ -34,6 +37,7 @@
     "@types/node": "^22.15.0",
     "@types/uuid": "^10.0.0",
     "tsx": "^4.19.0",
-    "typescript": "^5.8.0"
+    "typescript": "^5.8.0",
+    "wrangler": "^4.56.0"
   }
 }

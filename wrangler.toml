@@ -1,0 +1,8 @@
+name = "cursor2api-workers"
+main = "src/worker.ts"
+compatibility_date = "2026-03-17"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+PORT = "3010"
+LOG_FILE_ENABLED = "false"
